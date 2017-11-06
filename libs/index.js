@@ -15,20 +15,20 @@ var PluginError = gutil.PluginError;
  * @param {File} file
  */
 function getMetadata(file, metadata) {
-  var meta = {
-    contentType: mime.lookup(file.path)
-  }
+    var meta = {
+        contentType: mime.lookup(file.path)
+    }
 
-  // Check if it's gziped
-  if (file.contentEncoding && file.contentEncoding.indexOf('gzip') > -1) {
-    meta.contentEncoding = 'gzip';
-  }
+    // Check if it's gziped
+    if (file.contentEncoding && file.contentEncoding.indexOf('gzip') > -1) {
+        meta.contentEncoding = 'gzip';
+    }
 
-  if (metadata && metadata.cacheControl) {
-      meta.cacheControl = metadata.cacheControl;
-  }
+    if (metadata && metadata.cacheControl) {
+        meta.cacheControl = metadata.cacheControl;
+    }
 
-  return meta;
+    return meta;
 }
 
 /**
@@ -39,30 +39,29 @@ function getMetadata(file, metadata) {
  * @return {string} - new relative path for GCS
  */
 function normalizePath(base, file) {
-  var _relative = file.path.replace(file.base, '');
+    var _relative = file.path.replace(file.base, '');
 
-  // ensure there is a trailing slash in the base path
-  if (base && !/\/$/.test(base)) {
-    base += '/';
-  }
+    // ensure there is a trailing slash in the base path
+    if (base && !/\/$/.test(base)) {
+        base += '/';
+    }
 
-  // ensure the is no starting slash
-  if (base && /^\//.test(base)) {
-    base = base.replace(/^\//, '');
-  }
+    // ensure the is no starting slash
+    if (base && /^\//.test(base)) {
+        base = base.replace(/^\//, '');
+    }
 
-  base = base || '';
+    base = base || '';
+    var path = base + _relative;
 
-  var newPath = base + _relative;
-
-  return newPath.replace(/\\/g, "/");
+    return path.replace('//', '/');
 }
 
 /**
  * Log the file succesfully uploaded
  */
 function logSuccess(gPath) {
-  gutil.log('Uploaded', gutil.colors.cyan(gPath));
+    gutil.log('Uploaded', gutil.colors.cyan(gPath));
 }
 
 /**
@@ -77,53 +76,55 @@ function logSuccess(gPath) {
  * @param {Object} [options.metadata]   - Set the file metadata
  */
 function gPublish(options) {
-  // A configuration object is required
-  if (!options) {
-    throw new PluginError(PLUGIN_NAME, 'Missing configuration object!');
-  }
-  // And most of the keys also are
-  if (!options.bucket || !options.keyFilename || !options.projectId) {
-    throw new PluginError(PLUGIN_NAME, 'Missing required configuration params');
-  }
+    // A configuration object is required
+    if (!options) {
+        throw new PluginError(PLUGIN_NAME, 'Missing configuration object!');
+    }
+    // And most of the keys also are
+    if (!options.bucket || !options.keyFilename || !options.projectId) {
+        throw new PluginError(PLUGIN_NAME, 'Missing required configuration params');
+    }
 
-  return through.obj(function(file, enc, done) {
-    /* istanbul ignore next */
-    if (file.isNull()) { done(null, file); }
+    return through.obj(function (file, enc, done) {
+        /* istanbul ignore next */
+        if (file.isNull()) {
+            done(null, file);
+        }
 
-    file.path = file.path.replace(/\.gz$/, '');
+        file.path = file.path.replace(/\.gz$/, '');
 
-    // Authenticate on Google Cloud Storage
-    var storage = gcloudStorage({
-      keyFilename: options.keyFilename,
-      projectId: options.projectId
+        // Authenticate on Google Cloud Storage
+        var storage = gcloudStorage({
+            keyFilename: options.keyFilename,
+            projectId: options.projectId
+        });
+
+        var bucket = storage.bucket(options.bucket);
+
+        var gcPath = normalizePath(options.base, file);
+
+        var metadata = getMetadata(file, options.metadata);
+
+        var uploadOptions = {
+            destination: options.transformDestination ? options.transformDestination(gcPath) : gcPath,
+            metadata: metadata,
+            gzip: !!options.gzip,
+            public: !!options.public,
+            resumable: !!options.resumable
+        };
+
+        file.pipe(
+            bucket.file(uploadOptions.destination).createWriteStream(uploadOptions)
+        )
+            .on('error', function (e) {
+                throw new PluginError(PLUGIN_NAME, "Error in gcloud connection.\nError message:\n" + JSON.stringify(e));
+            })
+            .on('finish', function () {
+                logSuccess(uploadOptions.destination);
+                return done(null, file);
+            });
+
     });
-
-    var bucket = storage.bucket(options.bucket);
-
-    var gcPath = normalizePath(options.base, file);
-
-    var metadata = getMetadata(file, options.metadata);
-
-    var uploadOptions = {
-      destination: options.transformDestination ? options.transformDestination(gcPath) : gcPath,
-      metadata: metadata,
-      gzip: !!options.gzip,
-      public: !!options.public,
-      resumable: !!options.resumable
-    };
-
-    file.pipe(
-      bucket.file(uploadOptions.destination).createWriteStream(uploadOptions)
-    )
-      .on('error', function(e){
-        throw new PluginError(PLUGIN_NAME, "Error in gcloud connection.\nError message:\n" + JSON.stringify(e));
-      })
-      .on('finish', function() {
-        logSuccess(uploadOptions.destination);
-        return done(null, file);
-      });
-
-  });
 }
 
 module.exports = gPublish;
